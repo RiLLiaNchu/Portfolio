@@ -6,9 +6,9 @@ import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import React from "react";
 
-import MemberList from "./components/MemberList";
-import TableList from "./components/TableList";
-import CreateTableDialog from "./components/CreateTableDialog";
+import MemberList from "./components/-MemberList";
+import TableList from "./components/-TableList";
+import CreateTableDialog from "./components/-CreateTableDialog";
 
 interface Room {
   id: string;
