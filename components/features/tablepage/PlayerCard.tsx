@@ -1,18 +1,6 @@
 // プレイヤーカードコンポーネント
 import { Avatar, AvatarFallback, AvatarImage } from "../../ui/avatar";
-
-type TablePlayer = {
-    id: string;
-    user_id: string;
-    position: string;
-    seat_order: number;
-    current_score: number;
-    users: {
-        id: string;
-        name: string;
-        email: string;
-    };
-};
+import type { TablePlayer } from "@/types/table";
 
 export const PlayerCard = ({
     player,
@@ -21,7 +9,9 @@ export const PlayerCard = ({
     player: TablePlayer;
     position: string;
 }) => {
-    const isBot = player.users.email.endsWith("@bot.example.com");
+    const email = player.users?.email;
+    const isBot = email?.endsWith("@bot.example.com") ?? false;
+    const displayName = player.users?.name ?? "Unknown";
 
     return (
         <div
@@ -39,13 +29,13 @@ export const PlayerCard = ({
                                 : "bg-green-100 text-green-600"
                         }
                     >
-                        {isBot ? "🤖" : player.users.name.slice(0, 2)}
+                        {isBot ? "🤖" : displayName.slice(0, 2)}
                     </AvatarFallback>
                 </Avatar>
-                <div className="font-medium text-sm">{player.users.name}</div>
+                <div className="font-medium text-sm">{displayName}</div>
                 <div className="text-xs text-gray-600">{position}</div>
                 <div className="text-lg font-bold text-green-600 mt-1">
-                    {player.current_score.toLocaleString()}
+                    {player.current_score?.toLocaleString?.() ?? "-"}
                 </div>
                 {isBot && (
                     <div className="text-xs text-blue-600 font-medium bg-blue-100 px-2 py-1 rounded mt-1">
