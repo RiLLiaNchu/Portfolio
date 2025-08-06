@@ -1,243 +1,320 @@
-"use client"
+"use client";
 
-import type React from "react"
+import React, { createContext, useContext, useEffect, useState } from "react";
+import type { User } from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabase";
 
-import { createContext, useContext, useEffect, useState } from "react"
-import type { User } from "@supabase/supabase-js"
-import { supabase } from "@/lib/supabase"
+type Profile = {
+    id: string;
+    name?: string | null;
+    email?: string | null;
+    is_admin?: boolean | null;
+    updated_at?: string | null;
+};
 
 interface AuthContextType {
-  user: User | null
-  loading: boolean
-  isGuest: boolean
-  signIn: (email: string, password: string) => Promise<void>
-  signUp: (email: string, password: string, name: string) => Promise<void>
-  signInAsGuest: (name: string) => Promise<void>
-  signOut: () => Promise<void>
+    authUser: User | null; // supabase auth のユーザー情報（トークン等）
+    profile: Profile | null; // DB の users テーブルのプロフィール（is_admin など含む）
+    loading: boolean;
+    isGuest: boolean;
+    isAdmin: boolean; // 簡易フラグ（profile?.is_admin === true）
+    signIn: (email: string, password: string) => Promise<void>;
+    signUp: (email: string, password: string, name: string) => Promise<void>;
+    signInAsGuest: (name: string) => Promise<void>;
+    signOut: () => Promise<void>;
+    refreshProfile: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined)
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [isGuest, setIsGuest] = useState(false)
+    const [authUser, setAuthUser] = useState<User | null>(null);
+    const [profile, setProfile] = useState<Profile | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [isGuest, setIsGuest] = useState(false);
 
-  const syncUserToDatabase = async (authUser: User) => {
-    try {
-      // まずテーブルが存在するかチェック
-      const { data: tableCheck, error: tableError } = await supabase.from("users").select("count").limit(1)
+    const isAdmin = profile?.is_admin === true;
 
-      if (tableError) {
-        console.warn("usersテーブルが存在しません。データベースセットアップが必要です:", tableError.message)
-        return // テーブルが存在しない場合はスキップ
-      }
+    // DB の users テーブルから profile を取得する (id で)
+    const fetchProfile = async (userId: string) => {
+        try {
+            const { data, error } = await supabase
+                .from("users")
+                .select("id, name, email, is_admin, updated_at")
+                .eq("id", userId)
+                .single();
 
-      const userData = {
-        id: authUser.id,
-        email: authUser.email!,
-        name: authUser.user_metadata?.name || authUser.email!.split("@")[0] || "Unknown User",
-        updated_at: new Date().toISOString(),
-      }
+            if (error) {
+                // 404 相当やテーブル不存在などは無視して null を返す
+                console.warn("profile fetch warning:", error.message);
+                setProfile(null);
+                return null;
+            }
 
-      console.log("ユーザー同期データ:", userData)
+            setProfile(data as Profile);
+            return data as Profile;
+        } catch (err: any) {
+            console.error("fetchProfile error:", err);
+            setProfile(null);
+            return null;
+        }
+    };
 
-      const { error } = await supabase.from("users").upsert([userData], {
-        onConflict: "id",
-        ignoreDuplicates: false,
-      })
+    // authUser を DB の users テーブルに同期する（上書きで is_admin を消さないように注意）
+    const syncUserToDatabase = async (authUser: User) => {
+        try {
+            // テーブル存在チェック（安全に行う）
+            const { data: tableCheckData, error: tableCheckError } =
+                await supabase.from("users").select("id").limit(1);
 
-      if (error) {
-        console.error("ユーザー情報同期エラー詳細:", {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        })
-        throw error
-      }
+            if (tableCheckError) {
+                console.warn("users テーブルチェックで警告:", {
+                    message: tableCheckError.message,
+                    details: (tableCheckError as any).details,
+                    code: (tableCheckError as any).code,
+                });
+                // テーブルが存在しない可能性があるので同期処理はスキップ
+                return;
+            }
 
-      console.log("✅ ユーザー情報同期完了:", authUser.id)
-    } catch (err: any) {
-      console.error("❌ syncUserToDatabase 失敗:", {
-        error: err,
-        message: err?.message,
-        details: err?.details,
-        hint: err?.hint,
-      })
-      // エラーをthrowしない（アプリの動作を止めない）
-    }
-  }
+            const userData = {
+                id: authUser.id,
+                email: authUser.email ?? null,
+                name:
+                    (authUser as any)?.user_metadata?.name ??
+                    authUser.email?.split("@")[0] ??
+                    "Unknown User",
+                updated_at: new Date().toISOString(),
+            };
 
-  const syncGuestToDatabase = async (guestUser: User) => {
-    try {
-      // ゲストユーザー用の特別な処理
-      const { data: tableCheck, error: tableError } = await supabase.from("users").select("count").limit(1)
+            console.log("ユーザー同期データ:", userData);
 
-      if (tableError) {
-        console.warn("usersテーブルが存在しません")
-        return
-      }
+            const { data, error } = await supabase
+                .from("users")
+                .upsert(userData, { onConflict: "id" });
 
-      const userData = {
-        id: guestUser.id,
-        email: guestUser.email!,
-        name: guestUser.user_metadata?.name || "ゲストユーザー",
-        updated_at: new Date().toISOString(),
-      }
+            if (error) {
+                // error オブジェクトを安全に展開してログ出す
+                console.error("syncUserToDatabase upsert error:", {
+                    message: error?.message,
+                    details: (error as any)?.details,
+                    hint: (error as any)?.hint,
+                    code: (error as any)?.code,
+                    raw: error,
+                });
+                return;
+            }
 
-      console.log("ゲストユーザー同期データ:", userData)
+            // 成功時は profile を再取得して state 更新（もし fetchProfile を用意しているなら）
+            if (data) {
+                console.log(
+                    "✅ syncUserToDatabase success:",
+                    (data as any).id ?? authUser.id
+                );
+                // optional: await fetchProfile(authUser.id)
+            }
+        } catch (err: any) {
+            // try-catch でも詳しく出す
+            console.error("syncUserToDatabase unexpected error:", {
+                message: err?.message,
+                stack: err?.stack,
+                raw: err,
+            });
+        }
+    };
 
-      // ゲストユーザーを直接INSERT（RLS制約を回避するため）
-      const { error } = await supabase.from("users").upsert([userData], {
-        onConflict: "id",
-        ignoreDuplicates: false,
-      })
+    // ゲストユーザー向けの DB 同期（is_admin は false にする）
+    const syncGuestToDatabase = async (guestUser: User) => {
+        try {
+            const { error: tableError } = await supabase
+                .from("users")
+                .select("id")
+                .limit(1);
+            if (tableError) {
+                console.warn(
+                    "users テーブルが見つかりません。ゲスト同期をスキップします:",
+                    tableError.message
+                );
+                return;
+            }
 
-      if (error) {
-        console.error("ゲストユーザー同期エラー:", error)
-        // エラーでも続行（ゲスト機能を止めない）
-      } else {
-        console.log("✅ ゲストユーザー同期完了:", guestUser.id)
-      }
-    } catch (err: any) {
-      console.error("❌ syncGuestToDatabase 失敗:", err)
-      // エラーでも続行
-    }
-  }
+            const userData = {
+                id: guestUser.id,
+                email: guestUser.email ?? null,
+                name: guestUser.user_metadata?.name ?? "ゲストユーザー",
+                is_admin: false,
+                updated_at: new Date().toISOString(),
+            };
 
-  useEffect(() => {
-    const getSession = async () => {
-      try {
-        const {
-          data: { session },
-          error: sessionError,
-        } = await supabase.auth.getSession()
+            const { error } = await supabase.from("users").upsert(userData, {
+                onConflict: "id",
+            });
 
-        if (sessionError) {
-          console.error("セッション取得エラー:", sessionError)
-          setLoading(false)
-          return
+            if (error) {
+                console.error("syncGuestToDatabase error:", error);
+            } else {
+                await fetchProfile(guestUser.id);
+            }
+        } catch (err: any) {
+            console.error("syncGuestToDatabase unexpected error:", err);
+        }
+    };
+
+    // 全体初期化 & 認証状態リスナー設定
+    useEffect(() => {
+        let mounted = true;
+        const init = async () => {
+            setLoading(true);
+            try {
+                const {
+                    data: { session },
+                    error: sessionError,
+                } = await supabase.auth.getSession();
+
+                if (sessionError) {
+                    console.error("getSession error:", sessionError);
+                    setAuthUser(null);
+                    setProfile(null);
+                    setLoading(false);
+                    return;
+                }
+
+                if (session?.user) {
+                    if (!mounted) return;
+                    setAuthUser(session.user);
+                    await syncUserToDatabase(session.user);
+                } else {
+                    setAuthUser(null);
+                    setProfile(null);
+                }
+            } catch (err) {
+                console.error("init auth error:", err);
+            } finally {
+                if (mounted) setLoading(false);
+            }
+        };
+
+        init();
+
+        const { data: listener } = supabase.auth.onAuthStateChange(
+            async (_event, session) => {
+                setLoading(true);
+                try {
+                    if (session?.user) {
+                        setAuthUser(session.user);
+                        await syncUserToDatabase(session.user);
+                    } else {
+                        setAuthUser(null);
+                        setProfile(null);
+                    }
+                } catch (err) {
+                    console.error("onAuthStateChange handler error:", err);
+                } finally {
+                    setLoading(false);
+                }
+            }
+        );
+
+        return () => {
+            mounted = false;
+            listener.subscription.unsubscribe();
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // 公開 API: プロファイル再取得
+    const refreshProfile = async () => {
+        if (!authUser) return;
+        await fetchProfile(authUser.id);
+    };
+
+    // サインアップ
+    const signUp = async (email: string, password: string, name: string) => {
+        const { data, error } = await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+                data: { name },
+            },
+        });
+
+        if (error) throw error;
+
+        if (data.user) {
+            // DB に同期（is_admin は付けない）
+            await syncUserToDatabase(data.user);
+        }
+    };
+
+    // サインイン
+    const signIn = async (email: string, password: string) => {
+        const { data, error } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+        });
+
+        if (error) throw error;
+
+        if (data.user) {
+            await syncUserToDatabase(data.user);
+        }
+    };
+
+    // ゲストサインイン（クライアント側で擬似ユーザーを作る）
+    const signInAsGuest = async (name: string) => {
+        const guestId = crypto.randomUUID();
+        const guestUser = {
+            id: guestId,
+            email: `${guestId}@guest.local`,
+            user_metadata: { name, is_guest: true },
+            // cast to User minimally for compatibility; won't have full supabase tokens
+        } as unknown as User;
+
+        setAuthUser(guestUser);
+        setIsGuest(true);
+
+        await syncGuestToDatabase(guestUser);
+    };
+
+    // サインアウト
+    const signOut = async () => {
+        if (isGuest) {
+            setAuthUser(null);
+            setProfile(null);
+            setIsGuest(false);
+            return;
         }
 
-        if (session?.user) {
-          console.log("セッション取得成功:", session.user.id)
-          setUser(session.user)
-          await syncUserToDatabase(session.user)
-        } else {
-          console.log("セッションなし")
-        }
-      } catch (error) {
-        console.error("セッション処理エラー:", error)
-      } finally {
-        setLoading(false)
-      }
-    }
+        const { error } = await supabase.auth.signOut();
+        if (error) throw error;
+        setAuthUser(null);
+        setProfile(null);
+    };
 
-    getSession()
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log("認証状態変更:", event, session?.user?.id)
-
-      if (session?.user) {
-        setUser(session.user)
-        await syncUserToDatabase(session.user)
-      } else {
-        setUser(null)
-      }
-      setLoading(false)
-    })
-
-    return () => subscription.unsubscribe()
-  }, [])
-
-  const signUp = async (email: string, password: string, name: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          name,
-        },
-      },
-    })
-
-    if (error) throw error
-
-    if (data.user) {
-      await syncUserToDatabase(data.user)
-    }
-  }
-
-  const signIn = async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-
-    if (error) throw error
-
-    if (data.user) {
-      await syncUserToDatabase(data.user)
-    }
-  }
-
-  const signInAsGuest = async (name: string) => {
-    const guestId = crypto.randomUUID()
-    const guestUser = {
-      id: guestId,
-      email: `${guestId}@guest.local`,
-      user_metadata: {
-        name,
-        is_guest: true,
-      },
-      app_metadata: {},
-      aud: "authenticated",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    } as User
-
-    setUser(guestUser)
-    setIsGuest(true)
-
-    // ゲストユーザーもDBに追加
-    await syncGuestToDatabase(guestUser)
-  }
-
-  const signOut = async () => {
-    if (isGuest) {
-      setUser(null)
-      setIsGuest(false)
-      return
-    }
-
-    const { error } = await supabase.auth.signOut()
-    if (error) throw error
-  }
-
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        loading,
-        isGuest,
-        signIn,
-        signUp,
-        signInAsGuest,
-        signOut,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  )
+    return (
+        <AuthContext.Provider
+            value={{
+                authUser,
+                profile,
+                loading,
+                isGuest,
+                isAdmin,
+                signIn,
+                signUp,
+                signInAsGuest,
+                signOut,
+                refreshProfile,
+            }}
+        >
+            {children}
+        </AuthContext.Provider>
+    );
 }
 
 export const useAuth = () => {
-  const context = useContext(AuthContext)
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider")
-  }
-  return context
-}
+    const context = useContext(AuthContext);
+    if (context === undefined) {
+        throw new Error("useAuth must be used within an AuthProvider");
+    }
+    return context;
+};

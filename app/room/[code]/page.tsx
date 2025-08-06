@@ -6,9 +6,9 @@ import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import React from "react";
 
-import MemberList from "./components/-MemberList";
-import TableList from "./components/-TableList";
-import CreateTableDialog from "./components/-CreateTableDialog";
+import MemberList from "./-components/-MemberList";
+import TableList from "./-components/-TableList";
+import CreateTableDialog from "./-components/-CreateTableDialog";
 
 interface Room {
   id: string;
@@ -42,12 +42,12 @@ export default function RoomPage({
   const [showCreateModal, setShowCreateModal] = useState(false);
   const unwrappedParams = React.use(params);
 
-  const { user } = useAuth();
+  const { authUser } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     console.log(unwrappedParams);
-    if (!user) {
+    if (!authUser) {
       router.push("/login");
       return;
     }

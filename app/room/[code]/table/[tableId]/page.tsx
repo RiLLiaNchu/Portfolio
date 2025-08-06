@@ -56,7 +56,7 @@ export default function TablePage(props: {
     const [isSeatDialogOpen, setIsSeatDialogOpen] = useState(false);
     const [actionLoading, setActionLoading] = useState(false);
 
-    const { user, isGuest } = useAuth();
+    const { authUser, profile, isGuest, isAdmin, refreshProfile } = useAuth();
 
     // ビジネスルール
     const MIN_PLAYERS_TO_START = 1; // 変更したければここを編集
@@ -67,8 +67,15 @@ export default function TablePage(props: {
     const northPlayer = players.find((p) => p.position === "北");
 
     const isPlayerInTable =
-        !!user && players.some((p) => p.user_id === user.id);
+        !!authUser && players.some((p) => p.user_id === authUser.id);
     const canStart = players.length >= MIN_PLAYERS_TO_START && isPlayerInTable;
+
+    useEffect(() => {
+        // テーブルID が取れていない場合は読み込みしない
+        if (!tableId) return;
+        loadTableData();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tableId]);
 
     // テーブル・プレイヤー・ゲームデータをまとめて取得（APIコールを最小化）
     const loadTableData = async () => {
@@ -127,38 +134,34 @@ export default function TablePage(props: {
         }
     };
 
-    useEffect(() => {
-        // テーブルID が取れていない場合は読み込みしない
-        if (!tableId) return;
-        loadTableData();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [tableId]);
-
     const joinTable = async () => {
-        if (!user || !table) return;
+        if (!authUser || !table) return;
         setJoinLoading(true);
         try {
             // ゲストユーザーのDB登録を保証（存在チェック + insert）
-            if (isGuest || user.email?.endsWith("@guest.local")) {
+            if (isGuest || authUser.email?.endsWith("@guest.local")) {
                 const { data: existingUser, error: checkError } = await supabase
                     .from("users")
                     .select("id")
-                    .eq("id", user.id)
+                    .eq("id", authUser.id)
                     .single();
 
                 if (checkError && (checkError as any).code === "PGRST116") {
                     const { error: insertError } = await supabase
                         .from("users")
                         .insert({
-                            id: user.id,
-                            email: user.email!,
-                            name: user.user_metadata?.name || "ゲストユーザー",
+                            id: authUser.id,
+                            email: authUser.email ?? null,
+                            // user_metadata の型が不確定なので any キャストして安全に取り出す
+                            name:
+                                ((authUser as any).user_metadata?.name as string) ||
+                                "ゲストユーザー",
                         });
                     if (insertError) {
                         console.warn(
                             "ゲストユーザー追加エラー（続行）:",
                             insertError
-                        );
+                        ); // エラーでも続行する（既に存在する等の可能性）
                     }
                 }
             }
@@ -175,7 +178,7 @@ export default function TablePage(props: {
 
             const { error } = await supabase.from("table_players").insert({
                 table_id: tableId,
-                user_id: user.id,
+                user_id: authUser.id,
                 position: available,
                 seat_order: seatOrder,
                 current_score: 25000,
@@ -197,13 +200,13 @@ export default function TablePage(props: {
     };
 
     const leaveTable = async () => {
-        if (!user) return;
+        if (!authUser) return;
         try {
             const { error } = await supabase
                 .from("table_players")
                 .delete()
                 .eq("table_id", tableId)
-                .eq("user_id", user.id);
+                .eq("user_id", authUser.id);
 
             if (error) throw error;
 
@@ -306,7 +309,7 @@ export default function TablePage(props: {
 
     // 着席（Empty -> insert） 移動（既存 player -> update position & seat_order)
     const handleSitOrMove = async (toPosition: string) => {
-        if (!user || !table) {
+        if (!authUser || !table) {
             alert("ログインしてください");
             return;
         }
@@ -316,13 +319,13 @@ export default function TablePage(props: {
             const seat_order = positions.indexOf(toPosition) + 1;
 
             // まず自分が卓にいるか確認
-            const myPlayer = players.find((p) => p.user_id === user.id);
+            const myPlayer = players.find((p) => p.user_id === authUser.id);
 
             if (!myPlayer) {
                 // まだ卓にいない → INSERT（着席）
                 const { error } = await supabase.from("table_players").insert({
                     table_id: tableId,
-                    user_id: user.id,
+                    user_id: authUser.id,
                     position: toPosition,
                     seat_order,
                     current_score: 25000,
@@ -363,10 +366,10 @@ export default function TablePage(props: {
 
     // 退席（delete）
     const handleLeave = async (playerId?: string) => {
-        if (!playerId && !user) return;
+        if (!playerId && !authUser) return;
         setActionLoading(true);
         try {
-            const targetUserId = playerId ?? user!.id;
+            const targetUserId = playerId ?? authUser!.id;
             const { error } = await supabase
                 .from("table_players")
                 .delete()
@@ -440,12 +443,12 @@ export default function TablePage(props: {
     // 強制退席（targetUserId）: 実行前に権限チェックを必ず行ってね
     const forceLeaveUser = async (targetUserId: string) => {
         // 例: isAdmin フラグがあるならそれをチェック
-        if (!user) {
+        if (!authUser) {
             alert("ログインしてください");
             return;
         }
         // ここで権限チェック。ダミー例:
-        const currentIsAdmin = (user as any).is_admin === true; // もしくは別の判定方法
+        const currentIsAdmin = (authUser as any).is_admin === true; // もしくは別の判定方法
         if (!currentIsAdmin) {
             alert("権限がありません");
             return;
@@ -676,10 +679,11 @@ export default function TablePage(props: {
                     }
                     loading={actionLoading}
                     players={players}
-                    currentUserId={user?.id ?? null}
+                    currentUserId={authUser?.id ?? null}
                     canForceLeave={
-                        /* true なら強制退席ボタンを表示する */ (user as any)
-                            ?.is_admin === true
+                        /* true なら強制退席ボタンを表示する */ (
+                            authUser as any
+                        )?.is_admin === true
                     }
                 />
             </div>

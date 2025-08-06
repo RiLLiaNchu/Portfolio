@@ -8,14 +8,14 @@ import { useEffect } from "react"
 import Link from "next/link"
 
 export default function HomePage() {
-  const { user, loading } = useAuth()
+  const { authUser, loading } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
-    if (!loading && user) {
+    if (!loading && authUser) {
       router.push("/home")
     }
-  }, [user, loading, router])
+  }, [authUser, loading, router])
 
   if (loading) {
     return (

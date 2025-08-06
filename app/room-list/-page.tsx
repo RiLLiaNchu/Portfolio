@@ -24,22 +24,22 @@ export default function JoinRoomPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [recentRooms, setRecentRooms] = useState<any[]>([]);
-  const { user, isGuest } = useAuth();
+  const { authUser, isGuest } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!user) {
+    if (!authUser) {
       router.push("/login");
       return;
     }
     if (!isGuest) {
       loadRecentRooms();
     }
-  }, [user, isGuest, router]);
+  }, [authUser, isGuest, router]);
 
   const loadRecentRooms = async () => {
     try {
-      if (!user?.id || isGuest) return;
+      if (!authUser?.id || isGuest) return;
 
       // まずテーブルが存在するかチェック
       const { data, error } = await supabase
@@ -54,7 +54,7 @@ export default function JoinRoomPage() {
         )
       `
         )
-        .eq("user_id", user.id)
+        .eq("user_id", authUser.id)
         .order("joined_at", { ascending: false })
         .limit(3);
 
@@ -80,14 +80,14 @@ export default function JoinRoomPage() {
   };
 
   const ensureUserInDatabase = async () => {
-    if (!user) return false;
+    if (!authUser) return false;
 
     try {
       // ユーザーがDBに存在するか確認
       const { data: existingUser, error: checkError } = await supabase
         .from("users")
         .select("id")
-        .eq("id", user.id)
+        .eq("id", authUser.id)
         .single();
 
       if (
@@ -98,11 +98,11 @@ export default function JoinRoomPage() {
         // ユーザーが存在しない場合は追加
         console.log("ユーザーをDBに追加中...");
         const { error: insertError } = await supabase.from("users").insert({
-          id: user.id,
-          email: user.email!,
+          id: authUser.id,
+          email: authUser.email!,
           name:
-            user.user_metadata?.name ||
-            user.email!.split("@")[0] ||
+            authUser.user_metadata?.name ||
+            authUser.email!.split("@")[0] ||
             "Unknown User",
         });
 
@@ -134,7 +134,7 @@ export default function JoinRoomPage() {
     try {
       console.log("ルーム参加処理開始:", {
         roomCode,
-        userId: user?.id,
+        userId: authUser?.id,
         isGuest,
       });
 
@@ -160,7 +160,7 @@ export default function JoinRoomPage() {
           .insert({
             code: roomCode,
             name: `ルーム ${roomCode}`,
-            created_by: user?.id,
+            created_by: authUser?.id,
             expires_at: new Date(
               Date.now() + 24 * 60 * 60 * 1000
             ).toISOString(),
@@ -183,13 +183,13 @@ export default function JoinRoomPage() {
         console.log("既存ルーム発見:", roomId);
       }
 
-      console.log("ルームメンバー追加中...", { roomId, userId: user?.id });
+      console.log("ルームメンバー追加中...", { roomId, userId: authUser?.id });
 
       // ルームメンバーに追加
       const { error: memberError } = await supabase.from("room_members").upsert(
         {
           room_id: roomId,
-          user_id: user?.id,
+          user_id: authUser?.id,
         },
         { onConflict: "room_id,user_id" }
       );
@@ -211,7 +211,7 @@ export default function JoinRoomPage() {
     }
   };
 
-  if (!user) return null;
+  if (!authUser) return null;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -305,7 +305,7 @@ export default function JoinRoomPage() {
             </form>
             {process.env.NODE_ENV === "development" && (
               <div className="mt-4 p-3 bg-gray-100 rounded text-xs">
-                <div>ユーザーID: {user?.id}</div>
+                <div>ユーザーID: {authUser?.id}</div>
                 <div>ゲスト: {isGuest ? "はい" : "いいえ"}</div>
                 <div>入力コード: {roomCode}</div>
               </div>
