@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PlayerCard } from "@/components/features/tablepage/PlayerCard";
 import { EmptyPlayerCard } from "@/components/features/tablepage/EmptyPlayerCard";
+import SeatDialog from "@/components/features/tablepage/SeatDialog";
 import { useAuth } from "@/contexts/auth-context";
 import { supabase } from "@/lib/supabase";
 import type { TablePlayer } from "@/types/table";
@@ -46,6 +47,14 @@ export default function TablePage(props: {
     const [error, setError] = useState<string>("");
     const [joinLoading, setJoinLoading] = useState(false);
     const [botLoading, setBotLoading] = useState(false);
+    const [selectedSeatPosition, setSelectedSeatPosition] = useState<
+        string | null
+    >(null);
+    const [selectedPlayer, setSelectedPlayer] = useState<TablePlayer | null>(
+        null
+    );
+    const [isSeatDialogOpen, setIsSeatDialogOpen] = useState(false);
+    const [actionLoading, setActionLoading] = useState(false);
 
     const { user, isGuest } = useAuth();
 
@@ -176,7 +185,12 @@ export default function TablePage(props: {
 
             await loadTableData();
         } catch (err: any) {
-            alert(err?.message || "卓への参加に失敗しました");
+            // UNIQUE制約違反（同時着席）の場合
+            if (err.code === "23505") {
+                alert("その席はすでに埋まっています");
+            } else {
+                alert(err?.message || "卓への参加に失敗しました");
+            }
         } finally {
             setJoinLoading(false);
         }
@@ -283,6 +297,178 @@ export default function TablePage(props: {
         }
     };
 
+    // クリックでモーダル開くハンドラ（Empty と Player 両方から呼ぶ）
+    const openSeatDialog = (position: string, player?: TablePlayer) => {
+        setSelectedSeatPosition(position);
+        setSelectedPlayer(player ?? null);
+        setIsSeatDialogOpen(true);
+    };
+
+    // 着席（Empty -> insert） 移動（既存 player -> update position & seat_order)
+    const handleSitOrMove = async (toPosition: string) => {
+        if (!user || !table) {
+            alert("ログインしてください");
+            return;
+        }
+        setActionLoading(true);
+        try {
+            const positions = ["東", "南", "西", "北"];
+            const seat_order = positions.indexOf(toPosition) + 1;
+
+            // まず自分が卓にいるか確認
+            const myPlayer = players.find((p) => p.user_id === user.id);
+
+            if (!myPlayer) {
+                // まだ卓にいない → INSERT（着席）
+                const { error } = await supabase.from("table_players").insert({
+                    table_id: tableId,
+                    user_id: user.id,
+                    position: toPosition,
+                    seat_order,
+                    current_score: 25000,
+                });
+
+                if (error) throw error;
+                await loadTableData();
+                setIsSeatDialogOpen(false);
+                return;
+            }
+
+            // 自分がすでに座っている場合 → 移動（UPDATE）
+            // 単純に自分の row を更新して移動する
+            // NOTE: UNIQUE 成約があるため、同時移動の競合で 23505 が返る可能性あり
+            const { error } = await supabase
+                .from("table_players")
+                .update({ position: toPosition, seat_order })
+                .eq("id", myPlayer.id);
+
+            if (error) throw error;
+            await loadTableData();
+            setIsSeatDialogOpen(false);
+        } catch (err: any) {
+            // UNIQUE違反などは 23505 を返す（Postgres）
+            if (
+                err.code === "23505" ||
+                (err?.details && String(err.details).includes("duplicate"))
+            ) {
+                alert("その席はすでに埋まっています。最新の状況を取得します。");
+                await loadTableData();
+            } else {
+                alert(err?.message || "着席/移動に失敗しました");
+            }
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    // 退席（delete）
+    const handleLeave = async (playerId?: string) => {
+        if (!playerId && !user) return;
+        setActionLoading(true);
+        try {
+            const targetUserId = playerId ?? user!.id;
+            const { error } = await supabase
+                .from("table_players")
+                .delete()
+                .eq("table_id", tableId)
+                .eq("user_id", targetUserId);
+
+            if (error) throw error;
+            await loadTableData();
+            setIsSeatDialogOpen(false);
+        } catch (err: any) {
+            alert(err?.message || "退席に失敗しました");
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    // BOT追加
+    const addBotAtPosition = async (position: string) => {
+        if (!table) return;
+        setActionLoading(true);
+        try {
+            // 1) bot user を作る
+            const botId = crypto.randomUUID();
+            const botUser = {
+                id: botId,
+                email: `${botId}@bot.example.com`,
+                name: `BOT(${position})`,
+            };
+
+            // upsert user
+            const { error: usersError } = await supabase
+                .from("users")
+                .upsert(botUser);
+            if (usersError) {
+                console.error("BOT user upsert error:", usersError);
+                // 続行するか判断（この例では進める）
+            }
+
+            // 2) table_players に挿入
+            const positions = ["東", "南", "西", "北"];
+            const seat_order = positions.indexOf(position) + 1;
+
+            const { error: insertError } = await supabase
+                .from("table_players")
+                .insert({
+                    table_id: tableId,
+                    user_id: botId,
+                    position,
+                    seat_order,
+                    current_score: 25000,
+                });
+
+            if (insertError) {
+                // UNIQUE 競合などの可能性をハンドル
+                if ((insertError as any).code === "23505") {
+                    alert("その席はすでに埋まっています（BOT追加に失敗）");
+                } else {
+                    throw insertError;
+                }
+            } else {
+                await loadTableData();
+            }
+        } catch (err: any) {
+            console.error("addBotAtPosition error:", err);
+            alert(err?.message || "BOTの追加に失敗しました");
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    // 強制退席（targetUserId）: 実行前に権限チェックを必ず行ってね
+    const forceLeaveUser = async (targetUserId: string) => {
+        // 例: isAdmin フラグがあるならそれをチェック
+        if (!user) {
+            alert("ログインしてください");
+            return;
+        }
+        // ここで権限チェック。ダミー例:
+        const currentIsAdmin = (user as any).is_admin === true; // もしくは別の判定方法
+        if (!currentIsAdmin) {
+            alert("権限がありません");
+            return;
+        }
+
+        setActionLoading(true);
+        try {
+            const { error } = await supabase
+                .from("table_players")
+                .delete()
+                .eq("table_id", tableId)
+                .eq("user_id", targetUserId);
+
+            if (error) throw error;
+            await loadTableData();
+        } catch (err: any) {
+            console.error("forceLeaveUser error:", err);
+            alert(err?.message || "強制退席に失敗しました");
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
     return (
         <div className="min-h-screen bg-gray-50">
             <header className="bg-white border-b border-gray-200">
@@ -350,9 +536,20 @@ export default function TablePage(props: {
                                             <PlayerCard
                                                 player={eastPlayer}
                                                 position="東"
+                                                onClick={() =>
+                                                    openSeatDialog(
+                                                        "東",
+                                                        eastPlayer
+                                                    )
+                                                }
                                             />
                                         ) : (
-                                            <EmptyPlayerCard position="東" />
+                                            <EmptyPlayerCard
+                                                position="東"
+                                                onClick={() =>
+                                                    openSeatDialog("東")
+                                                }
+                                            />
                                         )}
                                     </div>
                                     <div className="absolute top-1/2 left-full transform -translate-y-1/2 translate-x-4 pointer-events-auto">
@@ -360,9 +557,20 @@ export default function TablePage(props: {
                                             <PlayerCard
                                                 player={southPlayer}
                                                 position="南"
+                                                onClick={() =>
+                                                    openSeatDialog(
+                                                        "南",
+                                                        southPlayer
+                                                    )
+                                                }
                                             />
                                         ) : (
-                                            <EmptyPlayerCard position="南" />
+                                            <EmptyPlayerCard
+                                                position="南"
+                                                onClick={() =>
+                                                    openSeatDialog("南")
+                                                }
+                                            />
                                         )}
                                     </div>
                                     <div className="absolute left-1/2 bottom-full transform -translate-x-1/2 -translate-y-4 pointer-events-auto">
@@ -370,9 +578,20 @@ export default function TablePage(props: {
                                             <PlayerCard
                                                 player={westPlayer}
                                                 position="西"
+                                                onClick={() =>
+                                                    openSeatDialog(
+                                                        "西",
+                                                        westPlayer
+                                                    )
+                                                }
                                             />
                                         ) : (
-                                            <EmptyPlayerCard position="西" />
+                                            <EmptyPlayerCard
+                                                position="西"
+                                                onClick={() =>
+                                                    openSeatDialog("西")
+                                                }
+                                            />
                                         )}
                                     </div>
                                     <div className="absolute top-1/2 right-full transform -translate-y-1/2 -translate-x-4 pointer-events-auto">
@@ -380,9 +599,20 @@ export default function TablePage(props: {
                                             <PlayerCard
                                                 player={northPlayer}
                                                 position="北"
+                                                onClick={() =>
+                                                    openSeatDialog(
+                                                        "北",
+                                                        northPlayer
+                                                    )
+                                                }
                                             />
                                         ) : (
-                                            <EmptyPlayerCard position="北" />
+                                            <EmptyPlayerCard
+                                                position="北"
+                                                onClick={() =>
+                                                    openSeatDialog("北")
+                                                }
+                                            />
                                         )}
                                     </div>
                                 </div>
@@ -429,6 +659,29 @@ export default function TablePage(props: {
                     </CardContent>
                 </Card>
                 {error && <div className="text-red-600 mt-2">{error}</div>}
+
+                <SeatDialog
+                    open={isSeatDialogOpen}
+                    onClose={() => setIsSeatDialogOpen(false)}
+                    position={selectedSeatPosition}
+                    player={selectedPlayer}
+                    onSit={() =>
+                        selectedSeatPosition &&
+                        handleSitOrMove(selectedSeatPosition)
+                    }
+                    onLeave={() => handleLeave(selectedPlayer?.user_id)}
+                    onAddBot={(pos) => addBotAtPosition(pos)}
+                    onForceLeave={(targetUserId) =>
+                        forceLeaveUser(targetUserId)
+                    }
+                    loading={actionLoading}
+                    players={players}
+                    currentUserId={user?.id ?? null}
+                    canForceLeave={
+                        /* true なら強制退席ボタンを表示する */ (user as any)
+                            ?.is_admin === true
+                    }
+                />
             </div>
         </div>
     );

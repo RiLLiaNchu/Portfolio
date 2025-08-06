@@ -5,17 +5,21 @@ import type { TablePlayer } from "@/types/table";
 export const PlayerCard = ({
     player,
     position,
+    onClick,
 }: {
     player: TablePlayer;
     position: string;
+    onClick?: () => void;
 }) => {
     const email = player.users?.email;
     const isBot = email?.endsWith("@bot.example.com") ?? false;
-    const displayName = player.users?.name ?? "Unknown";
+    const displayName = player.users?.name ?? "名無し";
 
     return (
-        <div
-            className={`bg-white p-3 rounded-lg shadow-md border-2 min-w-[120px] ${
+        <button
+            type="button"
+            onClick={onClick}
+            className={`bg-white p-3 rounded-lg shadow-md border-2 min-w-[120px] text-left ${
                 isBot ? "border-blue-300 bg-blue-50" : "border-green-200"
             }`}
         >
@@ -35,7 +39,9 @@ export const PlayerCard = ({
                 <div className="font-medium text-sm">{displayName}</div>
                 <div className="text-xs text-gray-600">{position}</div>
                 <div className="text-lg font-bold text-green-600 mt-1">
-                    {player.current_score?.toLocaleString?.() ?? "-"}
+                    {typeof player.current_score === "number"
+                        ? player.current_score?.toLocaleString()
+                        : "-"}
                 </div>
                 {isBot && (
                     <div className="text-xs text-blue-600 font-medium bg-blue-100 px-2 py-1 rounded mt-1">
@@ -43,6 +49,6 @@ export const PlayerCard = ({
                     </div>
                 )}
             </div>
-        </div>
+        </button>
     );
 };
