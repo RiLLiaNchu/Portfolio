@@ -83,7 +83,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 body: JSON.stringify(userData),
             });
 
-            const result = await response.json();
+            let result: any = null;
+            try {
+                result = await response.json(); // JSONを読み取り
+            } catch (err) {
+                console.error(
+                    "❌ Failed to parse JSON from user-sync API:",
+                    err
+                );
+                const text = await response.text(); // HTMLかもしれない
+                console.error("🔎 Raw response text:", text);
+                return;
+            }
 
             if (!response.ok) {
                 console.error(
@@ -137,8 +148,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             } else {
                 await fetchProfile(guestUser.id);
             }
-        } catch (err: any) {
-            console.error("syncGuestToDatabase unexpected error:", err);
+        } catch (err: unknown) {
+            console.error("syncUserToDatabase unexpected error:", {
+                raw: err,
+                type: typeof err,
+                isErrorInstance: err instanceof Error,
+                message: err instanceof Error ? err.message : String(err),
+                stack: err instanceof Error ? err.stack : "No stack",
+            });
         }
     };
 
