@@ -1,44 +1,75 @@
-// app/api/user-sync/route.ts
+import { NextResponse } from "next/server";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin"; // 管理用Supabaseクライアント
 
-import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-
-export async function POST(req: NextRequest) {
-  try {
+export async function POST(request: Request) {
     const supabaseAdmin = await getSupabaseAdmin();
+    try {
+        const body = await request.json();
+        const { id, email, name, mode } = body;
 
-    const body = await req.json();
-    const { id, email, name } = body;
+        if (!id || !email || !name) {
+            return NextResponse.json(
+                { error: "Missing required fields" },
+                { status: 400 }
+            );
+        }
 
-    if (!id || !email || !name) {
-      return NextResponse.json(
-        { error: "Missing user data" },
-        { status: 400 }
-      );
+        if (mode === "insert_if_not_exists") {
+            // すでに同じemailがあったら新規登録しない（エラーを返す）
+            const { data: existingUserByEmail } = await supabaseAdmin
+                .from("users")
+                .select("id")
+                .eq("email", email)
+                .single();
+
+            if (existingUserByEmail) {
+                return NextResponse.json(
+                    { error: "このメールアドレスは既に使われています" },
+                    { status: 409 }
+                );
+            }
+
+            // insert
+            const { error: insertError } = await supabaseAdmin
+                .from("users")
+                .insert({
+                    id,
+                    email,
+                    name,
+                });
+
+            if (insertError) {
+                return NextResponse.json(
+                    { error: insertError.message },
+                    { status: 500 }
+                );
+            }
+
+            return NextResponse.json({ message: "ユーザー登録完了" });
+        } else if (mode === "update_if_exists") {
+            const { error: updateError } = await supabaseAdmin
+                .from("users")
+                .update({
+                    last_active_at: new Date().toISOString(), // ここで今の日時をセット
+                    // 必要ならnameなど他の項目は除外してOK
+                })
+                .eq("id", id);
+
+            if (updateError) {
+                return NextResponse.json(
+                    { error: updateError.message },
+                    { status: 500 }
+                );
+            }
+
+            return NextResponse.json({ message: "最終ログイン日時更新完了" });
+        } else {
+            return NextResponse.json(
+                { error: "Invalid mode" },
+                { status: 400 }
+            );
+        }
+    } catch (error: any) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
     }
-
-    const { error } = await supabaseAdmin
-      .from("users")
-      .upsert(
-        {
-          id,
-          email,
-          name,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "id" }
-      );
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ message: "User synced successfully" });
-  } catch (error: any) {
-    console.error("API error:", error);
-    return NextResponse.json(
-      { error: error?.message || "Internal Server Error" },
-      { status: 500 }
-    );
-  }
 }

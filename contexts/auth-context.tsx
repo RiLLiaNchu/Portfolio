@@ -62,7 +62,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     // authUser を DB の users テーブルに同期する（上書きで is_admin を消さないように注意）
-    const syncUserToDatabase = async (authUser: User) => {
+    // modeを追加: "insert_if_not_exists" または "update_if_exists"
+    const syncUserToDatabase = async (
+        authUser: User,
+        mode:
+            | "insert_if_not_exists"
+            | "update_if_exists" = "insert_if_not_exists"
+    ) => {
         try {
             const userData = {
                 id: authUser.id,
@@ -71,6 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     (authUser as any)?.user_metadata?.name ??
                     authUser.email?.split("@")[0] ??
                     "Unknown User",
+                mode, // ← APIにモードも渡す
             };
 
             console.log("ユーザー同期データ:", userData);
@@ -91,17 +98,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     "❌ Failed to parse JSON from user-sync API:",
                     err
                 );
-                const text = await response.text(); // HTMLかもしれない
+                const text = await response.text();
                 console.error("🔎 Raw response text:", text);
                 return;
             }
 
             if (!response.ok) {
-                console.error(
-                    "❌ user-sync API error:",
-                    result?.error || "Unknown error"
-                );
-                return;
+                // エラーは返して、呼び出し元で表示制御
+                return { error: result?.error || "Unknown error" };
             }
 
             console.log("✅ user-sync success:", result.message);
@@ -181,7 +185,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 if (session?.user) {
                     if (!mounted) return;
                     setAuthUser(session.user);
-                    await syncUserToDatabase(session.user);
+                    await syncUserToDatabase(session.user, "update_if_exists");
                 } else {
                     setAuthUser(null);
                     setProfile(null);
@@ -201,7 +205,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 try {
                     if (session?.user) {
                         setAuthUser(session.user);
-                        await syncUserToDatabase(session.user);
+                        await syncUserToDatabase(
+                            session.user,
+                            "update_if_exists"
+                        );
                     } else {
                         setAuthUser(null);
                         setProfile(null);
@@ -237,11 +244,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             },
         });
 
-        if (error) throw error;
+        if (error) {
+            if (
+                error.status === 400 &&
+                error.message.includes("User already registered")
+            ) {
+                throw new Error("このメールアドレスは既に使われています");
+            }
+
+            throw new Error("登録中にエラーが発生しました");
+        }
 
         if (data.user) {
-            // DB に同期（is_admin は付けない）
-            await syncUserToDatabase(data.user);
+            const syncResult = await syncUserToDatabase(
+                data.user,
+                "insert_if_not_exists"
+            );
+
+            if (syncResult?.error) {
+                // ここで表示用の state にエラーをセットする or alert する
+                throw new Error(syncResult.error); // ここも必要なら UI 側に投げる
+            }
         }
     };
 
@@ -255,7 +278,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (error) throw error;
 
         if (data.user) {
-            await syncUserToDatabase(data.user);
+            try {
+                await syncUserToDatabase(data.user, "update_if_exists");
+            } catch (syncError) {
+                // ここでエラーをログに出すけど、throwしないからログインは止まらないよ
+                console.error("syncUserToDatabaseでエラー発生:", syncError);
+            }
         }
     };
 
