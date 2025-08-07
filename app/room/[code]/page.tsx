@@ -125,10 +125,7 @@ export default function RoomPage({
     return (
         <div className="p-4 max-w-5xl mx-auto space-y-6">
             <Header
-                backHref={`/room-list`}
-                icon={<SomeIcon />}
-                title="ルーム名"
-                menuItems={[{ label: "設定", href: "/settings" }]}
+				
             />
 
             <div className="flex gap-6">

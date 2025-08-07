@@ -3,7 +3,7 @@
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 
-const LogoutButton: React.FC<{ onAfterLogout?: () => void }> = ({
+export const LogoutButton: React.FC<{ onAfterLogout?: () => void }> = ({
     onAfterLogout,
 }) => {
     const router = useRouter();
@@ -28,5 +28,3 @@ const LogoutButton: React.FC<{ onAfterLogout?: () => void }> = ({
         </button>
     );
 };
-
-export { LogoutButton };
