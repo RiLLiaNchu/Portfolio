@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 type Profile = {
     id: string;
@@ -125,8 +126,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // ゲストユーザー向けの DB 同期（is_admin は false にする）
     const syncGuestToDatabase = async (guestUser: User) => {
+        const supabaseAdmin = await getSupabaseAdmin();
         try {
-            const { error: tableError } = await supabase
+            const { error: tableError } = await supabaseAdmin
                 .from("users")
                 .select("id")
                 .limit(1);
@@ -145,9 +147,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 is_admin: false,
             };
 
-            const { error } = await supabase.from("users").upsert(userData, {
-                onConflict: "id",
-            });
+            const { error } = await supabaseAdmin
+                .from("users")
+                .upsert(userData, {
+                    onConflict: "id",
+                });
 
             if (error) {
                 console.error("syncGuestToDatabase error:", error);
@@ -266,13 +270,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             id: guestId,
             email: `${guestId}@guest.local`,
             user_metadata: { name, is_guest: true },
-            // cast to User minimally for compatibility; won't have full supabase tokens
         } as unknown as User;
 
         setAuthUser(guestUser);
         setIsGuest(true);
 
-        await syncGuestToDatabase(guestUser);
+        // サーバーのAPIを呼び出してDB同期をお願いする
+        const res = await fetch("/api/guest-sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                id: guestUser.id,
+                email: guestUser.email,
+                name,
+            }),
+        });
+
+        if (!res.ok) {
+            console.error("ゲスト同期APIエラー", await res.text());
+        }
     };
 
     // サインアウト
