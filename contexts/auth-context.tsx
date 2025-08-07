@@ -64,20 +64,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // authUser を DB の users テーブルに同期する（上書きで is_admin を消さないように注意）
     const syncUserToDatabase = async (authUser: User) => {
         try {
-            // テーブル存在チェック（安全に行う）
-            const { data: tableCheckData, error: tableCheckError } =
-                await supabase.from("users").select("id").limit(1);
-
-            if (tableCheckError) {
-                console.warn("users テーブルチェックで警告:", {
-                    message: tableCheckError.message,
-                    details: (tableCheckError as any).details,
-                    code: (tableCheckError as any).code,
-                });
-                // テーブルが存在しない可能性があるので同期処理はスキップ
-                return;
-            }
-
             const userData = {
                 id: authUser.id,
                 email: authUser.email ?? null,
@@ -85,37 +71,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     (authUser as any)?.user_metadata?.name ??
                     authUser.email?.split("@")[0] ??
                     "Unknown User",
-                updated_at: new Date().toISOString(),
             };
 
             console.log("ユーザー同期データ:", userData);
 
-            const { data, error } = await supabase
-                .from("users")
-                .upsert(userData, { onConflict: "id" });
+            const response = await fetch("/api/user-sync", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(userData),
+            });
 
-            if (error) {
-                // error オブジェクトを安全に展開してログ出す
-                console.error("syncUserToDatabase upsert error:", {
-                    message: error?.message,
-                    details: (error as any)?.details,
-                    hint: (error as any)?.hint,
-                    code: (error as any)?.code,
-                    raw: error,
-                });
+            const result = await response.json();
+
+            if (!response.ok) {
+                console.error(
+                    "❌ user-sync API error:",
+                    result?.error || "Unknown error"
+                );
                 return;
             }
 
-            // 成功時は profile を再取得して state 更新（もし fetchProfile を用意しているなら）
-            if (data) {
-                console.log(
-                    "✅ syncUserToDatabase success:",
-                    (data as any).id ?? authUser.id
-                );
-                // optional: await fetchProfile(authUser.id)
-            }
+            console.log("✅ user-sync success:", result.message);
         } catch (err: any) {
-            // try-catch でも詳しく出す
             console.error("syncUserToDatabase unexpected error:", {
                 message: err?.message,
                 stack: err?.stack,
