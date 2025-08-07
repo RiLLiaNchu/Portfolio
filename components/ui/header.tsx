@@ -1,25 +1,21 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Menu as MenuIcon } from "lucide-react";
 import { Button } from "./button";
 import { Badge } from "./badge";
-import { cn } from "@/lib/utils";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+import { LogoutButton } from "../features/LogoutButton";
 
 /**
  * Header component
  * - backHref があれば戻るボタンを出す（ページ固有）
  * - icon を渡せばタイトル左に表示（ホームで使う）
- * - menuItems でハンバーガーメニューの中身を指定できる
- * - onLogout が渡っていればログアウト項目を自動追加
+ * - ログアウトボタンは固定表示
+ * - モバイル対応済み
  */
-
-type MenuItem = {
-    label: string;
-    onClick?: () => void;
-    href?: string; // リンクとして使いたい場合
-};
 
 type HeaderProps = {
     title?: React.ReactNode;
@@ -29,30 +25,40 @@ type HeaderProps = {
         text: string;
         variant?: "default" | "secondary" | "destructive";
     }; // ステータスバッジ
-    menuItems?: MenuItem[];
-    onLogout?: () => void; // メニュー内に "ログアウト" の追加
 };
 
-const Header: React.FC<HeaderProps> = ({
-    title,
-    backHref,
-    icon,
-    status,
-    menuItems = [],
-    onLogout,
-}: HeaderProps) => {
-    const [menuOpen, setMenuOpen] = useState(false);
+const Header: React.FC<HeaderProps> = ({ title, backHref, icon, status }) => {
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const menuRef = useRef<HTMLDivElement>(null);
 
-    const handleToggleMenu = () => setMenuOpen((v) => !v);
-    const handleCloseMenu = () => setMenuOpen(false);
+    const handleToggleMenu = () => setIsMenuOpen((v) => !v);
+    const handleCloseMenu = () => setIsMenuOpen(false);
 
-    const hasMenu = menuItems.length > 0 || !!onLogout;
+    // 外部クリックでメニューを閉じる
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (
+                menuRef.current &&
+                !menuRef.current.contains(event.target as Node)
+            ) {
+                setIsMenuOpen(false);
+            }
+        };
+
+        if (isMenuOpen) {
+            document.addEventListener("mousedown", handleClickOutside);
+        }
+
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [isMenuOpen]);
 
     return (
         <header className="bg-white border-b border-gray-200 px-4 py-3">
-            <div className="max-w-screen-xl mx-auto flex items-center justify-between">
-                {/* left area: back button / icon + title */}
-                <div className="flex items-center gap-3">
+            <div className="max-w-screen-xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-0">
+                {/* 左エリア */}
+                <div className="flex items-center gap-3 w-full sm:w-auto">
                     {backHref && (
                         <Button
                             variant="ghost"
@@ -76,7 +82,9 @@ const Header: React.FC<HeaderProps> = ({
 
                         {title && (
                             <div className="flex items-center gap-2">
-                                <h1 className="text-lg font-bold">{title}</h1>
+                                <h1 className="text-base sm:text-lg font-bold">
+                                    {title}
+                                </h1>
                                 {status && (
                                     <Badge
                                         variant={status.variant ?? "default"}
@@ -89,64 +97,30 @@ const Header: React.FC<HeaderProps> = ({
                     </div>
                 </div>
 
-                {/* right area: menu */}
+                {/* 右エリア */}
                 <div className="relative">
                     <Button
                         variant="ghost"
                         size="icon"
                         onClick={handleToggleMenu}
                         aria-haspopup="menu"
-                        aria-expanded={menuOpen}
+                        aria-expanded={isMenuOpen}
                         aria-label="メニューを開く"
                     >
                         <MenuIcon className="h-5 w-5" />
                     </Button>
 
                     {/* simple menu */}
-                    {menuOpen && (
+                    {isMenuOpen && (
                         <div
+                            ref={menuRef}
                             role="menu"
                             aria-label="ヘッダーメニュー"
                             className="absolute right-0 mt-2 w-48 bg-white border rounded shadow-md z-50"
                         >
                             <div className="flex flex-col py-1">
-                                {menuItems.map((it, idx) => {
-                                    const commonProps = {
-                                        key: idx,
-                                        className: "px-4 py-2 text-sm hover:bg-gray-100",
-                                        role: "menuitem",
-                                        onClick: () => {
-                                            handleCloseMenu();
-                                            it.onClick?.();
-                                        },
-                                    };
-
-                                    return it.href ? (
-                                        <Link href={it.href} {...commonProps}>
-                                            {it.label}
-                                        </Link>
-                                    ) : (
-                                        <button {...commonProps} className="text-left">
-                                            {it.label}
-                                        </button>
-                                    );
-                                })}
-
-                                {onLogout && (
-                                    <>
-                                        <div className="border-t my-1" />
-                                        <button
-                                            onClick={() => {
-                                                handleCloseMenu();
-                                                onLogout();
-                                            }}
-                                            className="px-4 py-2 text-sm text-red-600 hover: bg-red-50 text-left"
-                                            role="menuitem"
-                                        >
-                                            ログアウト
-                                        </button>
-                                    </>
-                                )}
+                                {/* メニュー項目 */}
+                                <LogoutButton onAfterLogout={handleCloseMenu} />
                             </div>
                         </div>
                     )}

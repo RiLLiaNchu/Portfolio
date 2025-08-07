@@ -14,7 +14,6 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Settings, BarChart3, Users, Plus, LogOut } from "lucide-react";
 import { Header } from "@/components/ui/header";
-import Image from "next/image";
 
 export default function HomePage() {
     const { authUser, loading, signOut } = useAuth();
@@ -31,15 +30,6 @@ export default function HomePage() {
             router.push("/");
         }
     }, [authUser, loading, router]);
-
-    const handleSignOut = async () => {
-        try {
-            await signOut();
-            router.push("/");
-        } catch (error) {
-            console.error("ログアウトエラー:", error);
-        }
-    };
 
     if (loading) {
         return (
@@ -65,7 +55,6 @@ export default function HomePage() {
                         </p>
                     </div>
                 }
-                onLogout={handleSignOut}
             />
 
             <div className="container mx-auto px-4 py-6 space-y-6">
