@@ -13,6 +13,8 @@ import { useAuth } from "@/contexts/auth-context";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Settings, BarChart3, Users, Plus, LogOut } from "lucide-react";
+import { Header } from "@/components/ui/header";
+import Image from "next/image";
 
 export default function HomePage() {
     const { authUser, loading, signOut } = useAuth();
@@ -52,32 +54,19 @@ export default function HomePage() {
     return (
         <div className="min-h-screen bg-gray-50">
             {/* ヘッダー */}
-            <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-                <div className="container mx-auto px-4 py-4">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className="text-2xl">🀄</div>
-                            <div>
-                                <h1 className="text-xl font-bold">
-                                    麻雀戦績管理
-                                </h1>
-                                <p className="text-sm text-gray-600">
-                                    おかえりなさい、
-                                    {authUser.user_metadata?.name || "ユーザー"}
-                                    さん
-                                </p>
-                            </div>
-                        </div>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={handleSignOut}
-                        >
-                            <LogOut className="h-5 w-5" />
-                        </Button>
+            <Header
+                icon={<div className="text-2xl">🀄</div>}
+                title={
+                    <div>
+                        <div>麻雀戦績管理</div>
+                        <p className="text-sm text-gray-600">
+                            おかえりなさい、
+                            {authUser.user_metadata?.name || "ユーザー"}さん
+                        </p>
                     </div>
-                </div>
-            </header>
+                }
+                onLogout={handleSignOut}
+            />
 
             <div className="container mx-auto px-4 py-6 space-y-6">
                 {/* 統計サマリー */}
