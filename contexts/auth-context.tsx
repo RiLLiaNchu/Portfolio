@@ -143,7 +143,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 email: guestUser.email ?? null,
                 name: guestUser.user_metadata?.name ?? "ゲストユーザー",
                 is_admin: false,
-                updated_at: new Date().toISOString(),
             };
 
             const { error } = await supabase.from("users").upsert(userData, {
