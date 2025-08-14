@@ -13,7 +13,6 @@ import { Header } from "@/components/ui/header";
 
 interface Room {
     id: string;
-    code: string;
     name: string;
     created_at: string;
     expires_at: string;
@@ -124,9 +123,7 @@ export default function RoomPage({
 
     return (
         <div className="p-4 max-w-5xl mx-auto space-y-6">
-            <Header
-				
-            />
+            <Header />
 
             <div className="flex gap-6">
                 {/* メンバー一覧 */}
