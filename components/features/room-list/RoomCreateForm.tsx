@@ -1,16 +1,9 @@
-import { useEffect, useState } from "react";
-import { fetchRooms } from "@/lib/api/rooms";
-import type { Room } from "@/types/room";
+import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
+import { joinRoom } from "@/lib/api/rooms";
 
 export const RoomCreateForm = () => {
-    const [rooms, setRooms] = useState<Room[]>([]);
-    const [search, setSearch] = useState("");
-    const [filteredRooms, setFilteredRooms] = useState<Room[]>([]);
-    const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
-    const [passwordInput, setPasswordInput] = useState("");
-    const [showPasswordModal, setShowPasswordModal] = useState(false);
     const [showCreateModal, setShowCreateModal] = useState(false);
     const router = useRouter();
 
@@ -23,6 +16,7 @@ export const RoomCreateForm = () => {
     // ルーム作成処理
     const handleCreateRoom = async () => {
         setCreateError("");
+
         if (!newRoomName.trim()) {
             setCreateError("ルーム名は必須です");
             return;
@@ -32,32 +26,18 @@ export const RoomCreateForm = () => {
             return;
         }
 
-        // 現在ログインしているユーザーの取得
-        const {
-            data: { user },
-        } = await supabase.auth.getUser();
-        if (!user) {
-            setCreateError("ログインしてください");
-            return;
-        }
-
-        // ユーザーが既に別ルームに入っていないかチェック
-        const { data: currentRooms } = await supabase
-            .from("room_members")
-            .select("room_id")
-            .eq("user_id", user.id);
-
-        // 他のルームにいたら退出
-        if (currentRooms && currentRooms.length > 0) {
-            await supabase.from("room_members").delete().eq("user_id", user.id);
-        }
-
-        // ルーム作成
         setCreating(true);
+
         try {
+            const {
+                data: { user },
+            } = await supabase.auth.getUser();
+            if (!user) throw new Error("ログインしてください");
+
             const expiresAt = new Date();
             expiresAt.setHours(expiresAt.getHours() + 24); // 例: 24時間後に自動削除予定
 
+            // ルーム作成
             const { data, error } = await supabase
                 .from("rooms")
                 .insert([
@@ -68,27 +48,13 @@ export const RoomCreateForm = () => {
                         expires_at: expiresAt.toISOString(),
                     },
                 ])
-                .select(
-                    `
-                    id,
-                    name,
-                    created_at,
-                    expires_at,
-                    created_by,
-                    created_by_user:created_by(name)
-            `
-                )
+                .select("id")
                 .single();
 
             if (error) throw error;
 
-            console.log("新規ルーム作成:", data);
-
-            // 作成者をメンバーとして登録
-            await supabase.from("room_members").insert({
-                room_id: data.id,
-                user_id: user.id,
-            });
+            // ルーム作成後に参加
+            await joinRoom(data.id);
 
             // フォームを閉じてリセット
             setShowCreateModal(false);
@@ -96,9 +62,10 @@ export const RoomCreateForm = () => {
             setNewRoomPassword("");
 
             // 作成後にルームページへ遷移
-            router.push(`/rooms/${data.id}`);
-        } catch (e) {
-            setCreateError("ルーム作成に失敗しました");
+            router.push(`/room/${data.id}`);
+        } catch (err: any) {
+            console.error(err);
+            setCreateError(err.message || "ルーム作成に失敗しました");
         } finally {
             setCreating(false);
         }

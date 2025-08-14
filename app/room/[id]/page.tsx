@@ -1,21 +1,22 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useAuth } from "@/contexts/auth-context";
+import { use, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
-import React from "react";
+import { useAuth } from "@/contexts/auth-context";
 
-import MemberList from "./-components/-MemberList";
-import TableList from "./-components/-TableList";
-import CreateTableDialog from "./-components/-CreateTableDialog";
+import MemberList from "./components/-MemberList";
+import TableList from "./components/-TableList";
+import CreateTableDialog from "./components/CreateTableDialog";
 import { Header } from "@/components/ui/header";
 
 interface Room {
     id: string;
     name: string;
+    code?: string;
     created_at: string;
     expires_at: string;
+    created_by: string;
 }
 
 interface RoomMember {
@@ -32,7 +33,7 @@ interface RoomMember {
 export default function RoomPage({
     params,
 }: {
-    params: Promise<{ code: string }>;
+    params: Promise<{ id: string }>;
 }) {
     const [room, setRoom] = useState<Room | null>(null);
     const [members, setMembers] = useState<RoomMember[]>([]);
@@ -40,40 +41,51 @@ export default function RoomPage({
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [showCreateModal, setShowCreateModal] = useState(false);
-    const unwrappedParams = React.use(params);
+    const resolvedParams = use(params);
 
     const { authUser } = useAuth();
     const router = useRouter();
+    const roomId = resolvedParams.id;
 
     useEffect(() => {
-        console.log(unwrappedParams);
         if (!authUser) {
             router.push("/login");
             return;
         }
 
-        loadRoomData();
+        loadRoomData(roomId);
 
+        // リアルタイム更新
         const channel = supabase
-            .channel(`room-${unwrappedParams.code}`)
+            .channel(`room-${roomId}`)
             .on(
                 "postgres_changes",
-                { event: "*", schema: "public", table: "room_members" },
-                () => loadRoomData()
+                {
+                    event: "*",
+                    schema: "public",
+                    table: "room_members",
+                    filter: `room_id=eq.${roomId}`,
+                },
+                () => loadRoomData(roomId)
             )
             .on(
                 "postgres_changes",
-                { event: "*", schema: "public", table: "tables" },
-                () => loadRoomData()
+                {
+                    event: "*",
+                    schema: "public",
+                    table: "tables",
+                    filter: `room_id=eq.${roomId}`,
+                },
+                () => loadRoomData(roomId)
             )
             .subscribe();
 
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [unwrappedParams.code]);
+    }, [authUser, roomId]);
 
-    const loadRoomData = async () => {
+    const loadRoomData = async (roomId: string) => {
         try {
             setLoading(true);
             setError("");
@@ -82,35 +94,30 @@ export default function RoomPage({
             const { data: roomData, error: roomError } = await supabase
                 .from("rooms")
                 .select("*")
-                .eq("code", unwrappedParams.code)
+                .eq("id", roomId)
                 .single();
-
             if (roomError) throw roomError;
-
             setRoom(roomData);
 
             // メンバー一覧取得
             const { data: membersData, error: membersError } = await supabase
                 .from("room_members")
                 .select("*, users(id, name, email)")
-                .eq("room_id", roomData.id)
+                .eq("room_id", roomId)
                 .order("joined_at", { ascending: true });
-
             if (membersError) throw membersError;
-
             setMembers(membersData || []);
 
             // 卓一覧取得
             const { data: tablesData, error: tablesError } = await supabase
                 .from("tables")
                 .select("*")
-                .eq("room_id", roomData.id)
+                .eq("room_id", roomId)
                 .order("created_at", { ascending: false });
-
             if (tablesError) throw tablesError;
-
             setTables(tablesData || []);
         } catch (e: any) {
+            console.error(e);
             setError(e.message || "ルーム情報の取得に失敗しました");
         } finally {
             setLoading(false);
@@ -135,7 +142,7 @@ export default function RoomPage({
                 <div className="flex-1">
                     <TableList
                         tables={tables}
-                        roomCode={unwrappedParams.code}
+                        roomCode={room.code || ""}
                         onOpenCreateModal={() => setShowCreateModal(true)}
                     />
                 </div>
@@ -146,7 +153,7 @@ export default function RoomPage({
                 open={showCreateModal}
                 onOpenChange={setShowCreateModal}
                 roomId={room.id}
-                roomCode={unwrappedParams.code}
+                roomCode={room.code || ""}
             />
         </div>
     );
